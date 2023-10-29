@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-from fast_ivf.version import __version__
+__version__ = "1.0.0"
 
 setup(
     name="fast_ivf",
