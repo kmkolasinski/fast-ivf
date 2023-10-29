@@ -18,6 +18,7 @@ class TFCentroidCompressor:
         dropout: float = 0.2,
         label_smoothing: float = 0.01,
         activation: str = "relu",
+        predict_approx_scores: bool = False,
     ):
         self.ndim = ndim
         self.bottleneck = bottleneck
@@ -29,6 +30,7 @@ class TFCentroidCompressor:
         self.activation = activation
         self.learning_rate = learning_rate
         self.label_smoothing = label_smoothing
+        self.predict_approx_scores = predict_approx_scores
 
         self.model = self.build_model()
         self.projector_fn = None
@@ -52,10 +54,11 @@ class TFCentroidCompressor:
 
     def get_compressor(self):
         if self.projector_fn is None:
-            projector = tf.keras.Model(
-                inputs=self.model.input,
-                outputs=[self.model.get_layer("projection").output, self.model.output],
-            )
+            if self.predict_approx_scores:
+                outputs = [self.model.get_layer("projection").output, self.model.output]
+            else:
+                outputs = self.model.get_layer("projection").output
+            projector = tf.keras.Model(inputs=self.model.input, outputs=outputs)
             projector = tf.function(projector)
             self.projector_fn = projector
         return self.projector_fn
@@ -96,12 +99,17 @@ class TFCentroidCompressor:
         self._history = history.history
         return history
 
-    def predict(self, vectors: np.ndarray):
+    def predict(self, vectors: np.ndarray) -> tuple[np.ndarray, Optional[np.ndarray]]:
         compressor = self.get_compressor()
-        x_proj, x_centroids = compressor(vectors)
+        if self.predict_approx_scores:
+            x_proj, x_centroids = compressor(vectors)
+            x_centroids = x_centroids.numpy()
+        else:
+            x_proj = compressor(vectors)
+            x_centroids = None
         x_proj = x_proj.numpy()
         x_proj = x_proj / np.linalg.norm(x_proj, axis=1, keepdims=True)
-        return x_proj, x_centroids.numpy()
+        return x_proj, x_centroids
 
     def add(self, iterator_fn, batch_size: int = 1024):
         iterator = iterator_fn(batch_size)

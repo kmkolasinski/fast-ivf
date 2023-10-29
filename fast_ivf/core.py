@@ -7,7 +7,7 @@ import numpy as np
 
 
 @nb.njit(fastmath=True, parallel=True)
-def get_rows_to_centroids(indices: nb.int32[:, :], nlist: int):
+def get_centroids_to_rows(indices: nb.int32[:, :], nlist: int):
     per_row = List.empty_list(nb.int32[:])
     for i in range(nlist):
         per_row.append(indices[0, :1])
@@ -97,6 +97,15 @@ def top_k(scores: nb.float32[:], k: int, sort: bool, ratio_threshold: float = 0.
         return top_indices, top_scores
 
 
+@nb.njit(fastmath=True)
+def top_k_numpy(scores: nb.float32[:], k: int, is_score: bool = True):
+    if is_score:
+        top_indices = np.argsort(scores)[::-1][:k]
+    else:
+        top_indices = np.argsort(scores)[:k]
+    return top_indices, scores[top_indices]
+
+
 @nb.njit(parallel=True)
 def append_scores_and_indices(
     query_indices,
@@ -128,18 +137,24 @@ def pad_to(array: np.ndarray, k: int, value: Union[float, int] = -1):
 
 @nb.njit(parallel=True)
 def select_topk(
-    query_points_scores,
-    query_points_indices,
-    sort: bool,
+    query_points_scores: nb.float32[:],
+    query_points_indices: nb.int32[:],
     topk: int,
-    ratio_threshold: float = 0.0,
+    is_score: bool = True,
 ):
     num_queries = len(query_points_scores)
     for i in prange(num_queries):
         scores = query_points_scores[i]
-        sort_indices, new_scores = top_k(
-            scores, k=topk, sort=sort, ratio_threshold=ratio_threshold
-        )
+
+        if topk / len(scores) < 0.3:
+            if is_score:
+                sort_indices, new_scores = top_k(scores, k=topk, sort=True)
+            else:
+                sort_indices, new_scores = top_k(-scores, k=topk, sort=True)
+                new_scores = -new_scores
+        else:
+            sort_indices, new_scores = top_k_numpy(scores, k=topk, is_score=is_score)
+
         new_indices = query_points_indices[i][sort_indices]
         if len(new_indices) < topk:
             new_indices = pad_to(new_indices, topk)
@@ -161,31 +176,64 @@ def batched_top_k(
     return top_indices, top_scores
 
 
+@nb.njit(fastmath=True, parallel=True)
+def batched_top_k_numpy(scores: nb.float32[:, :], k: int, is_score: bool = True):
+    top_indices = np.zeros((scores.shape[0], k), dtype=np.int32)
+    top_scores = np.zeros((scores.shape[0], k), dtype=np.float32)
+    for i in prange(scores.shape[0]):
+        top_indices[i], top_scores[i] = top_k_numpy(scores[i], k, is_score)
+    return top_indices, top_scores
+
+
+@nb.njit(fastmath=True, parallel=True)
+def compute_partial_scores(
+    rows_per_centroid: list[nb.int32[:]],
+    centroids_to_indices: list[nb.int32[:]],
+    queries_projected: nb.float32[:, :],
+    train_embeddings_projected: nb.int32[:, :],
+):
+    num_centroids = len(rows_per_centroid)
+    partial_scores = []
+
+    for centroid_id in range(num_centroids):
+        partial_scores.append(np.zeros((1, 1), dtype=np.float32))
+
+    for centroid_id in prange(num_centroids):
+        query_indices = rows_per_centroid[centroid_id]
+        train_indices = centroids_to_indices[centroid_id]
+
+        query_proj = queries_projected[query_indices]
+        train_proj = train_embeddings_projected[train_indices]
+
+        scores = query_proj @ train_proj.T
+        partial_scores[centroid_id] = scores
+    return partial_scores
+
+
 @nb.njit
 def approximated_search(
-    queries_projected: nb.float32[:, :],
-    queries_centroids_predictions: nb.float32[:, :],
-    faiss_clusters: list[nb.int32[:]],
+    query_embeddings_projected: nb.float32[:, :],
+    query_centroids_predictions: nb.float32[:, :],
+    centroids_to_indices: list[nb.int32[:]],
     train_embeddings_projected: nb.float32[:, :],
     nprobe: int = 5,
     topk: int = 100,
     ratio_threshold: float = 0.0,
-    sort: bool = True,
 ):
-    nlist = queries_centroids_predictions.shape[1]
+    nlist = query_centroids_predictions.shape[1]
     indices, _ = batched_top_k(
-        queries_centroids_predictions,
+        query_centroids_predictions,
         nprobe,
         sort=False,
         ratio_threshold=ratio_threshold,
     )
-    rows_per_centroid = get_rows_to_centroids(indices, nlist)
+    rows_per_centroid = get_centroids_to_rows(indices, nlist)
 
-    num_queries = queries_projected.shape[0]
+    num_queries = query_embeddings_projected.shape[0]
     query_points_count = np.zeros((num_queries,), dtype=np.int32)
 
     for centroid_id, query_indices in enumerate(rows_per_centroid):
-        index_indices = faiss_clusters[centroid_id]
+        index_indices = centroids_to_indices[centroid_id]
         for i, qi in enumerate(query_indices):
             query_points_count[qi] += len(index_indices)
 
@@ -199,21 +247,133 @@ def approximated_search(
         query_points_indices.append(np.zeros((count,), dtype=np.int32))
         query_points_offset[centroid_id] = 0
 
-    for centroid_id, query_indices in enumerate(rows_per_centroid):
-        index_indices = faiss_clusters[centroid_id]
-        query_proj = queries_projected[query_indices]
-        train_proj = train_embeddings_projected[index_indices]
+    partial_scores = compute_partial_scores(
+        rows_per_centroid,
+        centroids_to_indices,
+        query_embeddings_projected,
+        train_embeddings_projected,
+    )
 
-        scores = query_proj @ train_proj.T
+    for centroid_id, query_indices in enumerate(rows_per_centroid):
+        train_indices = centroids_to_indices[centroid_id]
+        scores = partial_scores[centroid_id]
+
         append_scores_and_indices(
             query_indices,
-            index_indices,
+            train_indices,
             scores,
             query_points_offset,
             query_points_scores,
             query_points_indices,
         )
 
-    select_topk(query_points_scores, query_points_indices, topk=topk, sort=sort)
+    select_topk(query_points_scores, query_points_indices, topk=topk)
 
     return query_points_scores, query_points_indices
+
+
+@nb.njit(fastmath=True, parallel=True)
+def compute_partial_scores_pq(
+    rows_per_centroid: list[nb.int32[:]],
+    centroids_to_indices: list[nb.int32[:]],
+    pq_centroid_scores: nb.float32[:, :, :],
+    pq_labels_to_centroids: nb.int32[:, :],
+):
+    num_centroids = len(rows_per_centroid)
+    partial_scores = []
+
+    for centroid_id in range(num_centroids):
+        partial_scores.append(np.zeros((1, 1), dtype=np.float32))
+
+    for centroid_id in prange(num_centroids):
+        query_indices = rows_per_centroid[centroid_id]
+        train_indices = centroids_to_indices[centroid_id]
+
+        query_scores = pq_centroid_scores[query_indices]
+        train_labels = pq_labels_to_centroids[train_indices]
+
+        scores = compute_approx_scores_pq(query_scores, train_labels)
+
+        partial_scores[centroid_id] = scores
+    return partial_scores
+
+
+@nb.njit
+def approximated_search_pq(
+    centroids_scores: nb.float32[:, :],
+    centroids_to_indices: list[nb.int32[:]],
+    pq_centroid_scores: nb.float32[:, :, :],
+    pq_labels_to_centroids: nb.int32[:, :],
+    nprobe: int = 5,
+    topk: int = 100,
+    ratio_threshold: float = 0.0,
+):
+    nlist = centroids_scores.shape[1]
+    indices, _ = batched_top_k(
+        centroids_scores,
+        nprobe,
+        sort=False,
+        ratio_threshold=ratio_threshold,
+    )
+    rows_per_centroid = get_centroids_to_rows(indices, nlist)
+
+    num_queries = centroids_scores.shape[0]
+    query_points_count = np.zeros((num_queries,), dtype=np.int32)
+
+    for centroid_id, query_indices in enumerate(rows_per_centroid):
+        index_indices = centroids_to_indices[centroid_id]
+        for i, qi in enumerate(query_indices):
+            query_points_count[qi] += len(index_indices)
+
+    query_points_scores = []
+    query_points_indices = []
+    query_points_offset = np.zeros((num_queries,), dtype=np.int32)
+
+    for centroid_id in range(num_queries):
+        count = query_points_count[centroid_id]
+        query_points_scores.append(np.zeros((count,), dtype=np.float32))
+        query_points_indices.append(np.zeros((count,), dtype=np.int32))
+        query_points_offset[centroid_id] = 0
+
+    partial_scores = compute_partial_scores_pq(
+        rows_per_centroid,
+        centroids_to_indices,
+        pq_centroid_scores,
+        pq_labels_to_centroids,
+    )
+
+    for centroid_id, query_indices in enumerate(rows_per_centroid):
+        train_indices = centroids_to_indices[centroid_id]
+        scores = partial_scores[centroid_id]
+
+        append_scores_and_indices(
+            query_indices,
+            train_indices,
+            scores,
+            query_points_offset,
+            query_points_scores,
+            query_points_indices,
+        )
+
+    select_topk(query_points_scores, query_points_indices, topk=topk, is_score=False)
+
+    return query_points_scores, query_points_indices
+
+
+@nb.njit
+def compute_approx_scores_pq(pred_distances: np.ndarray, train_labels: np.ndarray):
+    num_predictions = pred_distances.shape[0]
+    num_targets = train_labels.shape[0]
+    num_subspaces = train_labels.shape[1]
+
+    scores = np.zeros((num_predictions, num_targets), dtype=np.float32)
+
+    for p in range(num_predictions):
+        for t in range(num_targets):
+            for s in range(num_subspaces):
+                scores[p, t] += pred_distances[p, s, train_labels[t, s]]
+    return scores
+
+
+def normalize(vectors: np.ndarray) -> np.ndarray:
+    return vectors / (np.linalg.norm(vectors, axis=-1, keepdims=True) + 1e-5)
