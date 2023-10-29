@@ -18,7 +18,34 @@ Efficient implementation of IVF Index with numpy and numba
   * `MiniBatchKMeans` is used to estimate centroids of standard Inverted Index 
   * `SubspaceMiniBatchKMeans` is used to estimate centroids of Product Quantization Index
 * K-means implementations support only l2 or cosine distances
-* All indices currently support only cosine distance
+* All indices currently support only cosine distance 
+
+# Results on custom benchmark data
+
+* Resources restricted to `OMP_NUM_THREADS=MKL_NUM_THREADS=OPENBLAS_NUM_THREADS=12` which was consuming 100% in our case for fast-ivf and faiss
+* Train vectors: internal ~900k vectors of dim=1024, normalized to unit length
+* Test vectors: same but 40k vectors
+* Hyperparams: nprobe=10, ratio_threshold=0.5, no re-scoring is used for approximated indices (for mini-batch kmeans we use repository defaults), 
+for CompressionFastIVF we use compression_ndim=128 (which gives 8 times compression ratio)
+* We measure recall@10, as function which checks if `exact_i is in top_indices[:10]` for each test query, then we 
+average the results over all test vectors
+* For faiss I used similar parameters for nlist, m, nbits etc
+* Reported time is computed from average of 5 runs, divided by 40k to get the time per single query
+* As we use numba internally, each Fast-Index is initialized with warmup call to compile the code
+* Note: CompressedFastIVF requires to train small neural network to compress embeddings to lower dimensionality, which increases the index build time
+* For both libraries each search() call was consuming all 40k vectors, to fully utilize all vectorization
+
+| Index             | Recall@10 | Query Time (ms) | Params                                                                                   |
+|-------------------|-----------|-----------------|------------------------------------------------------------------------------------------|
+| FastIVF           | 0.964     | 0.100           | `nlist=1024, nprobe=10, ratio_threshold=0.5`                                             |
+| Faiss IVF         | 0.968     | 1.000           | `nlist=1024, nprobe=10`                                                                  |
+| FastIVFPQ         | 0.802     | 0.100           | `nlist=1024, nprobe=10, ratio_threshold=0.5, pq_num_subvectors=32, pq_num_centroids=128` |
+| Faiss IVFPQ       | 0.864     | 0.220           | `nlist=1024, nprobe=10, m=32, nbits=7`                                                   |
+| CompressedFastIVF | 0.933     | 0.050           | `nlist=1024, nprobe=10, ratio_threshold=0.5, compression_ndim=128`                       |
+| CompressedFastIVF | 0.889     | 0.040           | `nlist=1024, nprobe=10, ratio_threshold=0.5, compression_ndim=64`                        |
+
+
+
 
 ## Custom mini batch k-means implementation 
 
