@@ -5,7 +5,7 @@ __version__ = "1.0.0"
 setup(
     name="fast_ivf",
     version=__version__,
-    description="",
+    description="Efficient implementation of IVF + IVFPQ Index with numpy and numba",
     url="https://github.com/kmkolasinski/fast-ivf",
     author="Krzysztof Kolasinski",
     author_email="kmkolasinski@gmail.com",
@@ -16,5 +16,9 @@ setup(
         "numba>=0.58.0",
         "numpy>=1.24.3",
         "tqdm"
+    ],
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "Operating System :: OS Independent",
     ],
 )
