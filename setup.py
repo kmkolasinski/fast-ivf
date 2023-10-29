@@ -6,6 +6,8 @@ setup(
     name="fast_ivf",
     version=__version__,
     description="Efficient implementation of IVF + IVFPQ Index with numpy and numba",
+    long_description=open('README.md').read(),
+    long_description_content_type='text/markdown',
     url="https://github.com/kmkolasinski/fast-ivf",
     author="Krzysztof Kolasinski",
     author_email="kmkolasinski@gmail.com",
