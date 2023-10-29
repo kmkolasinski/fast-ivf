@@ -15,7 +15,7 @@ class MiniBatchKMeans:
         num_centroids: int,
         batch_size: int,
         history_size: int = 10,
-        max_steps: int = 1000,
+        max_steps: int = 5000,
         tol: float = 0.0001,
         min_max_ratio_threshold: float = 0.05,
         metric: MetricType = "cosine",
@@ -101,7 +101,11 @@ class MiniBatchKMeans:
         centroids_indices = NbList()
         centroids_labels = self.get_centroids_assignments()
         for i in range(self.num_centroids):
-            centroids_indices.append(np.array(centroids_labels[i]))
+            indices = centroids_labels[i]
+            if len(indices) == 0:
+                centroids_indices.append(np.zeros((0,), dtype=np.int64))
+            else:
+                centroids_indices.append(np.array(centroids_labels[i]))
         self._centroids_indices = centroids_indices
 
     def predict(self, vectors: np.ndarray) -> np.ndarray:
