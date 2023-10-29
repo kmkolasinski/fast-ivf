@@ -5,7 +5,8 @@ Efficient implementation of IVF Index with numpy and numba
 ## Installation
 
 * Install numpy and numba from conda to use intel mkl libraries for linear algebra operations
-* To install package run `pip install .`
+* To install package from the source code run `pip install .`
+* To install from pip run `pip install fast-ivf`
 * You may need to install tensorflow>=2.13, see `CompressedFastIVF` for details
 * code tested with python==3.11
 * see notebook [test-index](notebooks/test-index.ipynb) for Index usage examples
