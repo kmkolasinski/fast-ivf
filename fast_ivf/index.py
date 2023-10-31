@@ -156,7 +156,7 @@ class FastIVFPQ:
         kmeans_pq_batch_size: int = 128,
         kmeans_tol: float = 0.00005,
         kmeans_max_steps: int = 1000,
-        kmeans_pq_max_steps: int = 10000,
+        kmeans_pq_max_steps: int = 1000,
         rescore_num_samples: int = -1,
     ):
         self.ndim = ndim
