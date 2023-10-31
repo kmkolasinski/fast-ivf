@@ -16,8 +16,8 @@ class MiniBatchKMeans:
         batch_size: int,
         history_size: int = 10,
         max_steps: int = 5000,
-        tol: float = 0.0001,
-        min_max_ratio_threshold: float = 0.05,
+        tol: float = 0.00005,
+        min_max_ratio_threshold: float = 0.005,
         metric: MetricType = "cosine",
     ):
         self.num_centroids = num_centroids
@@ -203,8 +203,8 @@ class SubvectorsMiniBatchKMeans:
         batch_size: int,
         history_size: int = 10,
         max_steps: int = 1000,
-        tol: float = 1e-5,
-        min_max_ratio_threshold: float = 0.05,
+        tol: float = 0.00005,
+        min_max_ratio_threshold: float = 0.005,
         metric: MetricType = "cosine",
     ):
         self.num_centroids = num_centroids

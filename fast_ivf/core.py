@@ -185,7 +185,7 @@ def batched_top_k_numpy(scores: nb.float32[:, :], k: int, is_score: bool = True)
     return top_indices, top_scores
 
 
-@nb.njit(fastmath=True, parallel=True)
+@nb.njit(fastmath=True)
 def compute_partial_scores(
     rows_per_centroid: list[nb.int32[:]],
     centroids_to_indices: list[nb.int32[:]],
@@ -198,7 +198,7 @@ def compute_partial_scores(
     for centroid_id in range(num_centroids):
         partial_scores.append(np.zeros((1, 1), dtype=np.float32))
 
-    for centroid_id in prange(num_centroids):
+    for centroid_id in range(num_centroids):
         query_indices = rows_per_centroid[centroid_id]
         train_indices = centroids_to_indices[centroid_id]
 
